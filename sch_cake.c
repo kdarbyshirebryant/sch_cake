@@ -58,6 +58,10 @@
 #endif
 #include "cobalt.c"
 
+#if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
+#include <net/netfilter/nf_conntrack.h>
+#endif
+
 #if (KERNEL_VERSION(4,4,11) > LINUX_VERSION_CODE) || ((KERNEL_VERSION(4,5,0) <= LINUX_VERSION_CODE) && (KERNEL_VERSION(4,5,5) > LINUX_VERSION_CODE))
 #define qdisc_tree_reduce_backlog(_a,_b,_c) qdisc_tree_decrease_qlen(_a,_b)
 #endif
@@ -270,6 +274,70 @@ enum {
 	CAKE_FLOW_MAX
 };
 
+enum {
+	CAKE_NAT_NONE = 0,
+	CAKE_NAT_FULL,
+	CAKE_NAT_MAX
+};
+
+
+#if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
+static inline void cake_update_flowkeys(struct flow_keys *keys, const struct sk_buff *skb, int nat_mode)
+{
+	enum ip_conntrack_info ctinfo;
+	const struct nf_conn *ct;
+	const struct nf_conntrack_tuple *tuple;
+
+	if (nat_mode == CAKE_NAT_NONE)
+		return;
+
+	ct = nf_ct_get(skb, &ctinfo);
+	if (ct == NULL)
+		return;
+
+	tuple = &ct->tuplehash[CTINFO2DIR(ctinfo)].tuple;
+
+	switch(tc_skb_protocol(skb)) {
+		case htons(ETH_P_IP):
+#if KERNEL_VERSION(4, 2, 0) > LINUX_VERSION_CODE
+			keys->src = tuple->src.u3.ip;
+			keys->dst = tuple->dst.u3.ip;
+#else
+			keys->addrs.v4addrs.src = tuple->src.u3.ip;
+			keys->addrs.v4addrs.dst = tuple->dst.u3.ip;
+#endif
+			break;
+		case htons(ETH_P_IPV6):
+#if KERNEL_VERSION(4, 2, 0) > LINUX_VERSION_CODE
+			keys->src = (__force __be32)ipv6_addr_hash(&tuple->src.u3.in6);
+			keys->dst = (__force __be32)ipv6_addr_hash(&tuple->dst.u3.in6);
+#else
+			keys->addrs.v6addrs.src = tuple->src.u3.in6;
+			keys->addrs.v6addrs.dst = tuple->dst.u3.in6;
+#endif
+			break;
+		default:
+			return;
+	}
+	if (keys->ports.ports) {
+#if KERNEL_VERSION(4, 2, 0) > LINUX_VERSION_CODE
+		keys->port16[0] = tuple->src.u.all;
+		keys->port16[1] = tuple->dst.u.all;
+#else
+		keys->ports.src = tuple->src.u.all;
+		keys->ports.dst = tuple->dst.u.all;
+#endif
+	}
+}
+
+#else
+static inline cake_update_flowkeys(struct flow_keys *keys, const sk_buff *skb, int nat_mode)
+{
+	/* There is nothing we can do here without CONNTRACK */
+	return;
+}
+#endif
+
 static inline u32
 cake_hash(struct cake_tin_data *q, const struct sk_buff *skb, int flow_mode)
 {
@@ -286,6 +354,7 @@ cake_hash(struct cake_tin_data *q, const struct sk_buff *skb, int flow_mode)
 
 #if KERNEL_VERSION(4, 2, 0) > LINUX_VERSION_CODE
 	skb_flow_dissect(skb, &keys);
+	cake_update_flowkeys(&keys, skb, CAKE_NAT_FULL);
 
 	srchost_hash = jhash_1word(
 		(__force u32) keys.src, q->perturbation);
@@ -310,6 +379,7 @@ cake_hash(struct cake_tin_data *q, const struct sk_buff *skb, int flow_mode)
 	skb_flow_dissect_flow_keys(skb, &keys,
 				FLOW_DISSECTOR_F_STOP_AT_FLOW_LABEL);
 #endif
+	cake_update_flowkeys(&keys, skb, CAKE_NAT_FULL);
 	/* flow_hash_from_keys() sorts the addresses by value, so we have
 	 * to preserve their order in a separate data structure to treat
 	 * src and dst host addresses as independently selectable.
