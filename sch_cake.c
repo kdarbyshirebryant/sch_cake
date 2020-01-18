@@ -1675,7 +1675,7 @@ static u8 cake_handle_diffserv(struct sk_buff *skb, bool wash)
 		/* ToS is in the second byte of iphdr */
 		dscp = ipv4_get_dsfield((struct iphdr *)buf) >> 2;
 
-		if (wash && dscp) {
+		if (wash && dscp > 1) {
 			const int wlen = offset + sizeof(struct iphdr);
 
 			if (!pskb_may_pull(skb, wlen) ||
@@ -1695,7 +1695,7 @@ static u8 cake_handle_diffserv(struct sk_buff *skb, bool wash)
 		/* Traffic class is in the first and second bytes of ipv6hdr */
 		dscp = ipv6_get_dsfield((struct ipv6hdr *)buf) >> 2;
 
-		if (wash && dscp) {
+		if (wash && dscp > 1) {
 			const int wlen = offset + sizeof(struct ipv6hdr);
 
 			if (!pskb_may_pull(skb, wlen) ||
