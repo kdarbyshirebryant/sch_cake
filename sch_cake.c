@@ -189,6 +189,7 @@ struct cake_tin_data {
 
 	u32	packets;
 	u64	bytes;
+	u64	prev_bytes;
 
 	u32	ack_drops;
 
@@ -3061,6 +3062,9 @@ static int cake_dump_stats(struct Qdisc *sch, struct gnet_dump *d)
 
 		PUT_TSTAT_U64(THRESHOLD_RATE64, b->tin_rate_bps);
 		PUT_TSTAT_U64(SENT_BYTES64, b->bytes);
+		PUT_TSTAT_U32(TRAFFIC_BYTES, (u32)(b->bytes - b->prev_bytes));
+		b->prev_bytes = b->bytes;
+
 		PUT_TSTAT_U32(BACKLOG_BYTES, b->tin_backlog);
 
 		PUT_TSTAT_U32(TARGET_US,
